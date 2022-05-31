@@ -17,6 +17,10 @@
 ### Execution
 - python Exact432HzConverter.py
 
+- Analyze is to calculate the Tone of files
+
+- Convert is for converting the files into 432Hz Tone with filename: 432hz_Filename
+
 ### File Format
 - Supported Input: .m4a, .flac, .mp3, .wav, .wma, .aac 
 
