@@ -9,6 +9,9 @@ from tkinter import NO, DISABLED, NORMAL
 import glob
 import os
 import threading
+import subprocess
+import concurrent.futures
+import psutil
 
 #print("Exact 432Hz Converter v1.2")
 #print("Author: CardLin")
@@ -81,10 +84,11 @@ def LoadFolder():
     folder_selected=filedialog.askdirectory()
     types = (   os.path.join(folder_selected, '*.m4a'),
                 os.path.join(folder_selected, '*.flac'),
-                os.path.join(folder_selected, '*.mp3'), 
+                os.path.join(folder_selected, '*.mp3'),
                 os.path.join(folder_selected, '*.wav'),
                 os.path.join(folder_selected, '*.wma'),
-                os.path.join(folder_selected, '*.aac')
+                os.path.join(folder_selected, '*.aac'),
+                os.path.join(folder_selected, '*.opus')
             ) 
     files_grabbed = []
     for files in types:
@@ -120,7 +124,7 @@ def LoadFolder():
         IndexCounts+=1
 
 def LoadFiles():
-    files_selected=filedialog.askopenfilenames(filetypes=[("Audio files", ".m4a .flac .mp3 .wav .wma .aac")])
+    files_selected=filedialog.askopenfilenames(filetypes=[("Audio files", ".m4a .flac .mp3 .wav .wma .aac .opus")])
     TreeviewFilename_List = []
     for index, Filename in enumerate(Filename_List):
         if Deleted_List[index] == False:
@@ -188,6 +192,78 @@ def Analyze(selected_item):
         
         Analyzed_List[index]=True
 
+
+# def ffmpeg_speed_transform(filename, new_filename, target_sampling_rate, target_bitrate, max_freq=440, target_format="mp3"):
+#     # Get the original sampling rate of the audio
+#     info = mediainfo(filename)
+#     original_sampling_rate = int(info['sample_rate'])
+#     print(f"Original Sampling Rate: {original_sampling_rate} Hz")
+
+#     # Calculate the 432Hz speed ratio
+#     print("Input Tone:", max_freq, "Hz")
+#     speed_ratio = 432.0 / max_freq
+#     print("Using Speed Ratio:", speed_ratio, "to convert...")
+
+#     # Run ffmpeg command for pitch adjustment
+#     ffmpeg_command = [
+#         "ffmpeg",
+#         "-i", filename,                         # Input file
+#         "-af", f"asetrate={original_sampling_rate}*{speed_ratio},aresample={target_sampling_rate}",  # Adjust pitch and resample
+#         "-b:a", str(target_bitrate),           # Set target bitrate
+#         "-f", target_format,                   # Output format
+#         new_filename                           # Output file
+#     ]
+
+#     print("Executing FFmpeg command:", " ".join(ffmpeg_command))
+#     try:
+#         subprocess.run(ffmpeg_command, check=True)
+#         print(f"Conversion successful! Saved to {new_filename}")
+#     except subprocess.CalledProcessError as e:
+#         print(f"Error during conversion: {e}")
+
+
+def ffmpeg_speed_transform(filename, new_filename, target_sampling_rate, target_bitrate, max_freq=440, target_format="mp3"):
+    # Get the original sampling rate of the audio
+    info = mediainfo(filename)
+    original_sampling_rate = int(info['sample_rate'])
+    print(f"Original Sampling Rate: {original_sampling_rate} Hz")
+
+    # Calculate the 432Hz speed ratio
+    print("Input Tone:", max_freq, "Hz")
+    speed_ratio = 432.0 / max_freq
+    print("Using Speed Ratio:", speed_ratio, "to convert...")
+
+    # FFmpeg command for pitch adjustment
+    ffmpeg_command = [
+        "ffmpeg",
+        "-i", filename,  # Input file
+        "-af", f"asetrate={original_sampling_rate}*{speed_ratio},aresample={target_sampling_rate}",  # Adjust pitch and resample
+        "-b:a", str(target_bitrate),  # Set target bitrate
+        "-f", target_format,  # Output format
+        new_filename  # Output file
+    ]
+
+    print("Executing FFmpeg command with below-normal priority:", " ".join(ffmpeg_command))
+
+    try:
+        # Launch the FFmpeg process
+        process = subprocess.Popen(ffmpeg_command, creationflags=subprocess.CREATE_NO_WINDOW)
+
+        # Use psutil to set the process priority to below normal
+        p = psutil.Process(process.pid)
+        p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+
+        # Wait for the process to complete
+        process.wait()
+
+        if process.returncode == 0:
+            print(f"Conversion successful! Saved to {new_filename}")
+        else:
+            print(f"FFmpeg exited with non-zero code: {process.returncode}")
+
+    except Exception as e:
+        print(f"Error during conversion: {e}")
+
 def Convert(selected_item):
     index=FilesTreeview.set(selected_item, column="id")
     index=int(index)
@@ -213,12 +289,20 @@ def Convert(selected_item):
                 TargetFormat = "mp3"
             elif extension == "wma":
                 TargetFormat = "mp3"
+            elif extension == "opus":
+                TargetFormat = "mp3"
             new_filename=os.path.splitext(filename)[0]+'.'+TargetFormat
         else:
             new_filename=os.path.splitext(filename)[0]+'.'+TargetFormat
         
-        new_Filename=folder+"/"+"432hz_"+new_filename
-        print(Filename, end =" ")
+        
+        parent_dir, original_folder_name = os.path.split(folder)
+        prefixed_folder_name = f"432hz_{original_folder_name}"
+        new_folder = os.path.join(parent_dir, prefixed_folder_name)
+        os.makedirs(new_folder, exist_ok=True)
+        new_Filename = os.path.join(new_folder, f"432hz_{new_filename}")
+        
+        #new_Filename=folder+"/"+"432hz_"+new_filename
         
         Sampling_Rate=Sampling_Rate_List[index]
         Bitrate=Bitrate_List[index]
@@ -265,30 +349,33 @@ def Convert(selected_item):
         Status="Converting"
         FilesTreeview.item(selected_item, values=(index, Filename, Sampling_Rate, BitrateStr, ToneStr, Status))
         
-        song = AudioSegment.from_file(Filename)
-        original_bitrate = mediainfo(Filename)['bit_rate']
-        duration = song.duration_seconds
-        sample_rate = song.frame_rate
-        sample_width = song.sample_width
-        channels = song.channels
+        # song = AudioSegment.from_file(Filename)
+        # original_bitrate = mediainfo(Filename)['bit_rate']
+        # duration = song.duration_seconds
+        # sample_rate = song.frame_rate
+        # sample_width = song.sample_width
+        # channels = song.channels
         
-        max_freq=Tone
+        # max_freq=Tone
 
-        # Calculate the 432Hz speed ratio
-        print("is",max_freq,"Hz")
-        speed_ratio = 432.0/max_freq
-        print("Use Speed Ratio",speed_ratio,"to convert...")
+        # # Calculate the 432Hz speed ratio
+        # print("is",max_freq,"Hz")
+        # speed_ratio = 432.0/max_freq
+        # print("Use Speed Ratio",speed_ratio,"to convert...")
         
-        # Convert audio
-        new_song = speed_change(song, speed_ratio, TargetSamplingRate)
+        # # Convert audio
+        # new_song = speed_change(song, speed_ratio, TargetSamplingRate)
         
-        # Save audio
-        print("Save to",new_Filename)
-        #print("TargetFormat", TargetFormat)
-        #print("TargetBitrate", TargetBitrate)
-        #new_song.export(new_Filename, format=TargetFormat, bitrate=TargetBitrate)
-        new_song.export(new_Filename, format=TargetFormat, bitrate=str(TargetBitrate))
+        # # Save audio
+        # print("Save to",new_Filename)
+        # #print("TargetFormat", TargetFormat)
+        # #print("TargetBitrate", TargetBitrate)
+        # #new_song.export(new_Filename, format=TargetFormat, bitrate=TargetBitrate)
+        # new_song.export(new_Filename, format=TargetFormat, bitrate=str(TargetBitrate))
         
+        # new code to use ffmpeg instead:
+        ffmpeg_speed_transform(Filename, new_Filename, TargetSamplingRate, TargetBitrate, Tone, TargetFormat)
+
         Status="Converted"
         FilesTreeview.item(selected_item, values=(index, Filename, Sampling_Rate, BitrateStr, ToneStr, Status))
         
@@ -308,14 +395,34 @@ def ConvertSelected():
     AnalyzeButton['state'] = DISABLED
     ConvertButton['state'] = DISABLED
     RemoveItemsButton['state'] = DISABLED
+
     selected_items = FilesTreeview.selection()
-    for selected_item in selected_items:
+
+    # Function wrapper to check for Stop_Flag
+    def convert_wrapper(selected_item):
         global Stop_Flag
         if Stop_Flag:
             print("Stop Flag Detected")
-            break
+            return
         Convert(selected_item)
-    Stop_Flag=False
+
+    global Stop_Flag
+    Stop_Flag = False
+
+    # Use ThreadPoolExecutor to run Convert function in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(convert_wrapper, item): item for item in selected_items}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if Stop_Flag:
+                    print("Stopping further tasks...")
+                    break
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+
+    Stop_Flag = False
+
+    # Restore button states
     StopButton['state'] = DISABLED
     LoadFolderButton['state'] = NORMAL
     AnalyzeAllButton['state'] = NORMAL
@@ -339,14 +446,34 @@ def ConvertAll():
     AnalyzeButton['state'] = DISABLED
     ConvertButton['state'] = DISABLED
     RemoveItemsButton['state'] = DISABLED
+
     selected_items = FilesTreeview.get_children()
-    for selected_item in selected_items:
+
+    # Function wrapper to check for Stop_Flag
+    def convert_wrapper(selected_item):
         global Stop_Flag
         if Stop_Flag:
             print("Stop Flag Detected")
-            break
+            return
         Convert(selected_item)
-    Stop_Flag=False
+
+    global Stop_Flag
+    Stop_Flag = False
+
+    # Use ThreadPoolExecutor to run Convert function in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(convert_wrapper, item): item for item in selected_items}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if Stop_Flag:
+                    print("Stopping further tasks...")
+                    break
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+
+    Stop_Flag = False
+
+    # Restore button states
     StopButton['state'] = DISABLED
     LoadFolderButton['state'] = NORMAL
     AnalyzeAllButton['state'] = NORMAL
@@ -355,7 +482,6 @@ def ConvertAll():
     AnalyzeButton['state'] = NORMAL
     ConvertButton['state'] = NORMAL
     RemoveItemsButton['state'] = NORMAL
-
 
 def AnalyzeSelectedWorker():
     global thread_AnalyzeSelected
@@ -371,14 +497,33 @@ def AnalyzeSelected():
     AnalyzeButton['state'] = DISABLED
     ConvertButton['state'] = DISABLED
     RemoveItemsButton['state'] = DISABLED
+
     selected_items = FilesTreeview.selection()
-    for selected_item in selected_items:
+
+    # Function wrapper to check for Stop_Flag
+    def analyze_wrapper(selected_item):
         global Stop_Flag
         if Stop_Flag:
             print("Stop Flag Detected")
-            break
+            return
         Analyze(selected_item)
-    Stop_Flag=False
+
+    global Stop_Flag
+    Stop_Flag = False
+
+    # Use ThreadPoolExecutor to run Analyze function in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(analyze_wrapper, item): item for item in selected_items}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if Stop_Flag:
+                    print("Stopping further tasks...")
+                    break
+        except Exception as e:
+            print(f"Error during analysis: {e}")
+
+    Stop_Flag = False
+
     StopButton['state'] = DISABLED
     LoadFolderButton['state'] = NORMAL
     AnalyzeAllButton['state'] = NORMAL
@@ -402,15 +547,34 @@ def AnalyzeAll():
     AnalyzeButton['state'] = DISABLED
     ConvertButton['state'] = DISABLED
     RemoveItemsButton['state'] = DISABLED
-    
+
     selected_items = FilesTreeview.get_children()
-    for selected_item in selected_items:
+
+    # Function wrapper to check for Stop_Flag
+    def analyze_wrapper(selected_item):
         global Stop_Flag
         if Stop_Flag:
             print("Stop Flag Detected")
-            break
+            return
         Analyze(selected_item)
-    Stop_Flag=False
+
+    global Stop_Flag
+    Stop_Flag = False
+
+    # Use ThreadPoolExecutor to run Analyze function in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(analyze_wrapper, item): item for item in selected_items}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if Stop_Flag:
+                    print("Stopping further tasks...")
+                    break
+        except Exception as e:
+            print(f"Error during analysis: {e}")
+
+    Stop_Flag = False
+
+    # Restore button states
     StopButton['state'] = DISABLED
     LoadFolderButton['state'] = NORMAL
     AnalyzeAllButton['state'] = NORMAL
